@@ -148,6 +148,8 @@ class RoleAtPlugin(Star):
             name = " ".join(args[:-3])
             if not name:
                 raise ValueError("名称不能为空")
+            if name.isdigit():
+                raise ValueError("身份组名称不能为纯数字，以免与序号混淆")
             if broadcast not in (0, 1) or visible not in (0, 1):
                 raise ValueError("广播/可见性参数必须为 0 或 1")
             if max_members < 0:
@@ -329,19 +331,24 @@ class RoleAtPlugin(Star):
 
     async def _cmd_add(self, event, group_id, args):
         if not args:
-            yield event.plain_result("用法：/role add <序号>\n先用 /role list 查看身份列表。")
-            return
-
-        try:
-            index = int(args[0])
-        except ValueError:
-            yield event.plain_result("❌ 序号必须为整数。")
+            yield event.plain_result("用法：/role add <序号|身份名>\n先用 /role list 查看身份列表。")
             return
 
         visible_roles = self._get_visible_roles_indexed(group_id)
-        found = next(((name, info) for idx, name, info in visible_roles if idx == index), None)
+        query = " ".join(args)
+
+        if query.isdigit():
+            # 按序号查找
+            index = int(query)
+            found = next(((name, info) for idx, name, info in visible_roles if idx == index), None)
+            hint = f"序号 {index}"
+        else:
+            # 按身份名查找（精确匹配）
+            found = next(((name, info) for _, name, info in visible_roles if name == query), None)
+            hint = f"身份名「{query}」"
+
         if not found:
-            yield event.plain_result(f"❌ 未找到序号 {index} 的身份，请用 /role list 查看可用身份。")
+            yield event.plain_result(f"❌ 未找到{hint}对应的身份，请用 /role list 查看可用身份。")
             return
 
         role_name, role_info = found
@@ -412,21 +419,31 @@ class RoleAtPlugin(Star):
 
     async def _cmd_at(self, event, group_id, args):
         if not args:
-            yield event.plain_result("用法：/role at <身份组名称>")
+            yield event.plain_result("用法：/role at <身份名> [附加消息]")
             return
 
-        role_name = " ".join(args)
         group_data = self._get_group_data(group_id)
 
         if not self._is_admin(event) and group_data.get("freeat", 1) == 0:
             yield event.plain_result("❌ 管理员已关闭普通用户的身份组 AT 功能。")
             return
 
-        if role_name not in group_data["roles"]:
-            yield event.plain_result(f"❌ 未找到身份组 [{role_name}]，请检查名称是否正确。")
+        # 从最长前缀开始匹配身份名，其余部分作为附加消息
+        roles = group_data["roles"]
+        role_name = None
+        extra_msg = ""
+        for i in range(len(args), 0, -1):
+            candidate = " ".join(args[:i])
+            if candidate in roles:
+                role_name = candidate
+                extra_msg = " ".join(args[i:])
+                break
+
+        if role_name is None:
+            yield event.plain_result(f"❌ 未找到身份组「{' '.join(args)}」，请检查名称是否正确。")
             return
 
-        role_info = group_data["roles"][role_name]
+        role_info = roles[role_name]
         members = role_info.get("members", [])
         broadcast_accept = role_info.get("broadcast_accept", [])
 
@@ -447,7 +464,10 @@ class RoleAtPlugin(Star):
         for qq in at_targets:
             chain.append(Comp.At(qq=qq))
             chain.append(Comp.Plain(" "))
-        chain.append(Comp.Plain(f"\n📣 来自身份组 [{role_name}] 的呼叫"))
+        notice = f"\n📣 来自身份组 [{role_name}] 的呼叫"
+        if extra_msg:
+            notice += f"\n{extra_msg}"
+        chain.append(Comp.Plain(notice))
 
         yield event.chain_result(chain)
 
@@ -460,9 +480,9 @@ class RoleAtPlugin(Star):
             "━━━━━━━━━━━━━━━━━━\n"
             "【通用指令】\n"
             "/role list — 查看所有可见身份\n"
-            "/role add <序号> — 加入身份\n"
+            "/role add <序号|身份名> — 加入身份\n"
             "/role remove <序号> — 退出身份\n"
-            "/role at <身份名> — AT 该身份组成员\n"
+            "/role at <身份名> [附加消息] — AT 该身份组成员\n"
             "━━━━━━━━━━━━━━━━━━\n"
             "【管理员专属】\n"
             "/role addpreset <名称> <上限> <广播0/1> <可见0/1>\n"
