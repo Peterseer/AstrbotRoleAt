@@ -44,7 +44,12 @@ class RoleAtPlugin(Star):
 
     def _sync_freeat_from_config(self):
         """将插件配置中的 freeat_settings 同步到运行时数据（配置优先）"""
-        freeat_settings: dict = self.config.get("freeat_settings", {})
+        raw = self.config.get("freeat_settings", "{}")
+        try:
+            freeat_settings: dict = json.loads(raw) if isinstance(raw, str) else raw
+        except (json.JSONDecodeError, TypeError):
+            logger.warning("[RoleAt] freeat_settings 配置格式不合法，跳过同步")
+            return
         changed = False
         for group_id, val in freeat_settings.items():
             if val not in (0, 1):
@@ -354,9 +359,14 @@ class RoleAtPlugin(Star):
         group_data["freeat"] = value
         self._save_data()
 
-        # 同步到插件配置
-        freeat_settings: dict = self.config.setdefault("freeat_settings", {})
+        # 同步到插件配置（freeat_settings 以 JSON 字符串存储）
+        raw = self.config.get("freeat_settings", "{}")
+        try:
+            freeat_settings: dict = json.loads(raw) if isinstance(raw, str) else dict(raw)
+        except (json.JSONDecodeError, TypeError):
+            freeat_settings = {}
         freeat_settings[group_id] = value
+        self.config["freeat_settings"] = json.dumps(freeat_settings, ensure_ascii=False, indent=2)
         self.config.save_config()
 
         status = "开启（所有人可使用 /role at）" if value else "关闭（仅管理员可使用 /role at）"
