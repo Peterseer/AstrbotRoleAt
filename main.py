@@ -4,7 +4,7 @@ import time
 from typing import Dict, Optional, Tuple
 
 import astrbot.api.message_components as Comp
-from astrbot.api import AstrBotConfig, logger
+from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
 
@@ -14,15 +14,12 @@ PENDING_TIMEOUT = 300  # 广播确认等待超时：5分钟
 
 @register("astrbot_plugin_role_at", "Author", "QQ群身份组管理与AT插件", "1.0.0")
 class RoleAtPlugin(Star):
-    def __init__(self, context: Context, config: AstrBotConfig):
+    def __init__(self, context: Context):
         super().__init__(context)
-        self.config = config
         self.data: Dict = {}
         # 待确认广播接收的用户：{(group_id, user_id): {"role_name": str, "time": float}}
         self.pending_broadcast: Dict[Tuple[str, str], Dict] = {}
         self._load_data()
-        self._sync_freeat_from_config()
-        self._update_config_preview()
 
     def _load_data(self):
         try:
@@ -38,58 +35,8 @@ class RoleAtPlugin(Star):
             os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
             with open(DATA_FILE, "w", encoding="utf-8") as f:
                 json.dump(self.data, f, ensure_ascii=False, indent=2)
-            self._update_config_preview()
         except Exception as e:
             logger.error(f"[RoleAt] 保存数据失败: {e}")
-
-    def _sync_freeat_from_config(self):
-        """将插件配置中的 freeat_settings 同步到运行时数据（配置优先）"""
-        raw = self.config.get("freeat_settings", "{}")
-        try:
-            freeat_settings: dict = json.loads(raw) if isinstance(raw, str) else raw
-        except (json.JSONDecodeError, TypeError):
-            logger.warning("[RoleAt] freeat_settings 配置格式不合法，跳过同步")
-            return
-        changed = False
-        for group_id, val in freeat_settings.items():
-            if val not in (0, 1):
-                continue
-            group_data = self._get_group_data(group_id)
-            if group_data.get("freeat") != int(val):
-                group_data["freeat"] = int(val)
-                changed = True
-        if changed:
-            try:
-                os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
-                with open(DATA_FILE, "w", encoding="utf-8") as f:
-                    json.dump(self.data, f, ensure_ascii=False, indent=2)
-            except Exception as e:
-                logger.error(f"[RoleAt] 同步 freeat 配置时写入失败: {e}")
-
-    def _update_config_preview(self):
-        """将各群身份组数据写入插件配置的预览字段，供 WebUI 查看"""
-        try:
-            preview: Dict = {}
-            for group_id, group_data in self.data.items():
-                roles_info: Dict = {}
-                for role_name, role_info in group_data.get("roles", {}).items():
-                    roles_info[role_name] = {
-                        "max_members": role_info.get("max_members", 0),
-                        "broadcast": role_info.get("broadcast", 0),
-                        "visible": role_info.get("visible", 1),
-                        "members": role_info.get("members", []),
-                        "broadcast_accept": role_info.get("broadcast_accept", []),
-                    }
-                preview[group_id] = {
-                    "freeat": group_data.get("freeat", 1),
-                    "roles": roles_info,
-                }
-            self.config["group_data_preview"] = json.dumps(
-                preview, ensure_ascii=False, indent=2
-            )
-            self.config.save_config()
-        except Exception as e:
-            logger.warning(f"[RoleAt] 更新配置预览失败: {e}")
 
     def _get_group_data(self, group_id: str) -> dict:
         if group_id not in self.data:
@@ -359,16 +306,6 @@ class RoleAtPlugin(Star):
         group_data["freeat"] = value
         self._save_data()
 
-        # 同步到插件配置（freeat_settings 以 JSON 字符串存储）
-        raw = self.config.get("freeat_settings", "{}")
-        try:
-            freeat_settings: dict = json.loads(raw) if isinstance(raw, str) else dict(raw)
-        except (json.JSONDecodeError, TypeError):
-            freeat_settings = {}
-        freeat_settings[group_id] = value
-        self.config["freeat_settings"] = json.dumps(freeat_settings, ensure_ascii=False, indent=2)
-        self.config.save_config()
-
         status = "开启（所有人可使用 /role at）" if value else "关闭（仅管理员可使用 /role at）"
         yield event.plain_result(f"✅ 身份组 AT 功能已{status}。")
 
@@ -610,5 +547,4 @@ class RoleAtPlugin(Star):
     # ─────────────────────────────────────────
 
     async def terminate(self):
-        self._save_data()
         self._save_data()
