@@ -70,19 +70,41 @@ class RoleAtPlugin(Star):
         for k in stale:
             del self.pending_broadcast[k]
 
-    def _try_add_member(self, group_id: str, user_id: str, role_name: str, role_info: dict, is_admin_op: bool = False) -> Optional[str]:
+    def _add_or_update_member(
+        self,
+        group_id: str,
+        user_id: str,
+        role_name: str,
+        role_info: dict,
+        broadcast_choice: Optional[int] = None,
+        is_admin_op: bool = False,
+    ) -> tuple:
         """
-        尝试将用户加入身份组。成功返回 None，失败返回错误消息字符串。
+        将用户加入身份组，或在已有成员的情况下更新其广播接收状态。
+        - broadcast_choice: 1=接收, 0=不接收, None=不指定（需后续询问）
+        返回 ("added", None) / ("updated", None) / ("error", 错误消息)
         """
-        subject = "该用户" if is_admin_op else "您"
-        if user_id in role_info.get("members", []):
-            return f"{subject}已经在身份组 [{role_name}] 中了。"
-        max_members = role_info.get("max_members", 0)
-        if max_members > 0 and len(role_info.get("members", [])) >= max_members:
-            return f"身份组 [{role_name}] 已达人数上限（{max_members} 人）。"
-        role_info.setdefault("members", []).append(user_id)
+        members = role_info.setdefault("members", [])
+        broadcast_accept = role_info.setdefault("broadcast_accept", [])
+        already_member = user_id in members
+
+        if not already_member:
+            max_members = role_info.get("max_members", 0)
+            if max_members > 0 and len(members) >= max_members:
+                return "error", f"身份组 [{role_name}] 已达人数上限（{max_members} 人）。"
+            members.append(user_id)
+
+        # 若提供了广播选择且该身份组开启了广播，立即写入
+        if broadcast_choice is not None and role_info.get("broadcast") == 1:
+            if broadcast_choice == 1:
+                if user_id not in broadcast_accept:
+                    broadcast_accept.append(user_id)
+            else:
+                if user_id in broadcast_accept:
+                    broadcast_accept.remove(user_id)
+
         self._save_data()
-        return None
+        return ("updated" if already_member else "added"), None
 
     # ─────────────────────────────────────────
     #   主指令入口
@@ -209,10 +231,17 @@ class RoleAtPlugin(Star):
             return
 
         if len(args) < 2:
-            yield event.plain_result("用法：/role adminadd <用户QQ号> <序号>")
+            yield event.plain_result("用法：/role adminadd <用户QQ号> <序号> [广播接收0/1]")
             return
 
         target_qq = args[0].lstrip("@")
+
+        # 判断是否提供了广播选择（第三个参数）
+        if len(args) >= 3 and args[2] in ("0", "1"):
+            broadcast_choice: Optional[int] = int(args[2])
+        else:
+            broadcast_choice = None
+
         try:
             index = int(args[1])
         except ValueError:
@@ -226,9 +255,24 @@ class RoleAtPlugin(Star):
             return
 
         role_name, role_info = found
-        error = self._try_add_member(group_id, target_qq, role_name, role_info, is_admin_op=True)
-        if error:
+        has_broadcast = role_info.get("broadcast") == 1
+
+        status, error = self._add_or_update_member(
+            group_id, target_qq, role_name, role_info, broadcast_choice, is_admin_op=True
+        )
+        if status == "error":
             yield event.plain_result(f"❌ {error}")
+            return
+
+        if status == "updated":
+            if broadcast_choice is not None and has_broadcast:
+                bc_str = "接收 ✅" if broadcast_choice == 1 else "不接收"
+                yield event.chain_result([
+                    Comp.At(qq=target_qq),
+                    Comp.Plain(f" 该用户已在身份组 [{role_name}] 中，广播接收已更新为：{bc_str}"),
+                ])
+            else:
+                yield event.plain_result(f"ℹ️ 用户 {target_qq} 已在身份组 [{role_name}] 中。")
             return
 
         yield event.chain_result([
@@ -236,7 +280,7 @@ class RoleAtPlugin(Star):
             Comp.Plain(f" 管理员已将您加入身份组 [{role_name}]！"),
         ])
 
-        if role_info.get("broadcast") == 1:
+        if has_broadcast and broadcast_choice is None:
             self._clean_pending()
             self.pending_broadcast[(group_id, target_qq)] = {
                 "role_name": role_name,
@@ -331,19 +375,25 @@ class RoleAtPlugin(Star):
 
     async def _cmd_add(self, event, group_id, args):
         if not args:
-            yield event.plain_result("用法：/role add <序号|身份名>\n先用 /role list 查看身份列表。")
+            yield event.plain_result("用法：/role add <序号|身份名> [广播接收0/1]\n先用 /role list 查看身份列表。")
             return
 
+        # 若最后一个参数是 0 或 1，视为广播选择；其余部分为身份标识
+        if len(args) >= 2 and args[-1] in ("0", "1"):
+            broadcast_choice: Optional[int] = int(args[-1])
+            role_args = args[:-1]
+        else:
+            broadcast_choice = None
+            role_args = args
+
         visible_roles = self._get_visible_roles_indexed(group_id)
-        query = " ".join(args)
+        query = " ".join(role_args)
 
         if query.isdigit():
-            # 按序号查找
             index = int(query)
             found = next(((name, info) for idx, name, info in visible_roles if idx == index), None)
             hint = f"序号 {index}"
         else:
-            # 按身份名查找（精确匹配）
             found = next(((name, info) for _, name, info in visible_roles if name == query), None)
             hint = f"身份名「{query}」"
 
@@ -353,18 +403,38 @@ class RoleAtPlugin(Star):
 
         role_name, role_info = found
         user_id = event.get_sender_id()
+        has_broadcast = role_info.get("broadcast") == 1
 
-        error = self._try_add_member(group_id, user_id, role_name, role_info)
-        if error:
+        status, error = self._add_or_update_member(
+            group_id, user_id, role_name, role_info, broadcast_choice
+        )
+        if status == "error":
             yield event.plain_result(f"❌ {error}")
             return
 
+        if status == "updated":
+            # 已在组内，仅更新广播状态
+            if broadcast_choice is not None and has_broadcast:
+                bc_str = "接收 ✅" if broadcast_choice == 1 else "不接收"
+                yield event.chain_result([
+                    Comp.At(qq=user_id),
+                    Comp.Plain(f" 您已在身份组 [{role_name}] 中，广播接收已更新为：{bc_str}"),
+                ])
+            else:
+                yield event.chain_result([
+                    Comp.At(qq=user_id),
+                    Comp.Plain(f" 您已在身份组 [{role_name}] 中。如需更改广播设置，可重新执行 /role add {query} 0/1"),
+                ])
+            return
+
+        # 新加入
         yield event.chain_result([
             Comp.At(qq=user_id),
             Comp.Plain(f" 您已成功加入身份组 [{role_name}]！"),
         ])
 
-        if role_info.get("broadcast") == 1:
+        if has_broadcast and broadcast_choice is None:
+            # 未提供广播选择，发起询问
             self._clean_pending()
             self.pending_broadcast[(group_id, user_id)] = {
                 "role_name": role_name,
@@ -480,7 +550,7 @@ class RoleAtPlugin(Star):
             "━━━━━━━━━━━━━━━━━━\n"
             "【通用指令】\n"
             "/role list — 查看所有可见身份\n"
-            "/role add <序号|身份名> — 加入身份\n"
+            "/role add <序号|身份名> [广播0/1] — 加入身份（可选直接指定广播接收）\n"
             "/role remove <序号> — 退出身份\n"
             "/role at <身份名> [附加消息] — AT 该身份组成员\n"
             "━━━━━━━━━━━━━━━━━━\n"
@@ -488,7 +558,7 @@ class RoleAtPlugin(Star):
             "/role addpreset <名称> <上限> <广播0/1> <可见0/1>\n"
             "    创建预设身份（上限0=无上限）\n"
             "/role delpreset <名称> — 删除预设身份\n"
-            "/role adminadd <QQ> <序号> — 为用户添加身份\n"
+            "/role adminadd <QQ> <序号> [广播0/1] — 为用户添加身份\n"
             "/role adminremove <QQ> <序号> — 移除用户的身份\n"
             "/role freeat <0/1> — 开关普通用户的 AT 功能"
         )
