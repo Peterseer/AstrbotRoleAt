@@ -601,3 +601,4 @@ class RoleAtPlugin(Star):
 
     async def terminate(self):
         self._save_data()
+        self._save_data()
