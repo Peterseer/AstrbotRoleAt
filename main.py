@@ -133,6 +133,7 @@ class RoleAtPlugin(Star):
             "list": self._cmd_list,
             "add": self._cmd_add,
             "remove": self._cmd_remove,
+            "show": self._cmd_show,
             "adminadd": self._cmd_adminadd,
             "adminremove": self._cmd_adminremove,
             "freeat": self._cmd_freeat,
@@ -544,6 +545,41 @@ class RoleAtPlugin(Star):
     async def _cmd_help(self, event, group_id, args):
         yield event.plain_result(self._help_text())
 
+    async def _cmd_show(self, event, group_id, args):
+        # 确定要查询的 QQ
+        if args:
+            target_qq = args[0].lstrip("@")
+            is_self = False
+        else:
+            target_qq = event.get_sender_id()
+            is_self = True
+
+        group_data = self._get_group_data(group_id)
+        roles = group_data.get("roles", {})
+
+        matched = []
+        for role_name, role_info in roles.items():
+            if target_qq in role_info.get("members", []):
+                has_broadcast = role_info.get("broadcast") == 1
+                accepted = target_qq in role_info.get("broadcast_accept", [])
+                matched.append((role_name, has_broadcast, accepted))
+
+        subject = "您" if is_self else f"用户 {target_qq}"
+
+        if not matched:
+            yield event.plain_result(f"ℹ️ {subject}当前未加入本群任何身份组。")
+            return
+
+        lines = [f"👤 {subject}的身份组列表："]
+        for role_name, has_broadcast, accepted in matched:
+            if has_broadcast:
+                bc_tag = "📢接收广播" if accepted else "📢未接收广播"
+                lines.append(f"• {role_name}（{bc_tag}）")
+            else:
+                lines.append(f"• {role_name}")
+
+        yield event.plain_result("\n".join(lines))
+
     def _help_text(self) -> str:
         return (
             "📖 身份组管理指令帮助\n"
@@ -552,6 +588,7 @@ class RoleAtPlugin(Star):
             "/role list — 查看所有可见身份\n"
             "/role add <序号|身份名> [广播0/1] — 加入身份（可选直接指定广播接收）\n"
             "/role remove <序号> — 退出身份\n"
+            "/role show [QQ号] — 查看自己或指定用户所在的身份组\n"
             "/role at <身份名> [附加消息] — AT 该身份组成员\n"
             "━━━━━━━━━━━━━━━━━━\n"
             "【管理员专属】\n"
