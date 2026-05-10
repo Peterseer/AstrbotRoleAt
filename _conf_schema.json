@@ -1,0 +1,16 @@
+{
+  "freeat_settings": {
+    "description": "各群 AT 权限设置",
+    "type": "dict",
+    "hint": "Key 为群号（字符串），Value 为 0（仅管理员可 AT）或 1（所有人可 AT）。\n通过 /role freeat 0/1 指令操作后会自动同步至此处；也可直接在此修改后保存，插件重载后生效。",
+    "default": {}
+  },
+  "group_data_preview": {
+    "description": "各群身份组数据预览（自动生成，请勿手动编辑）",
+    "type": "text",
+    "editor_mode": true,
+    "editor_language": "json",
+    "hint": "实时显示各群的身份组预设配置、成员列表及广播接受情况。每次指令操作后自动更新，无需手动维护。",
+    "default": "{}"
+  }
+}

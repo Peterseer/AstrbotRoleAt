@@ -1,6 +1,9 @@
-name: helloworld # 插件唯一识别名，以 astrbot_plugin_ 前缀开头
-display_name: helloworld # 用于展示的名字，可以是方便人类阅读的名字（需要版本 >= v4.5.0，低版本不会报错，请放心填写）
-desc: AstrBot 插件示例。 # 插件简短描述
-version: v1.3.0 # 插件版本号。格式：v1.1.1 或者 v1.1
-author: Soulter # 作者
-repo: https://github.com/Soulter/helloworld # 插件的仓库地址
+name: astrbot_plugin_role_at
+display_name: 群身份组管理 & AT
+desc: 在 QQ 群中创建身份组预设，管理成员归属，并通过指令 AT 指定身份组的广播成员。
+short_desc: QQ群身份组管理与广播AT插件
+version: v1.0.1
+author: SeerXi
+repo: https://github.com/Peterseer/AstrbotRoleAt
+support_platforms:
+  - aiocqhttp

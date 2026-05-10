@@ -1,14 +1,139 @@
-# astrbot-plugin-helloworld
+# astrbot_plugin_role_at
 
-AstrBot 插件模板 / A template plugin for AstrBot plugin feature
+适用于 [AstrBot](https://github.com/AstrBotDevs/AstrBot) 的 QQ 群身份组管理与 AT 插件。
 
-> [!NOTE]
-> This repo is just a template of [AstrBot](https://github.com/AstrBotDevs/AstrBot) Plugin.
-> 
-> [AstrBot](https://github.com/AstrBotDevs/AstrBot) is an agentic assistant for both personal and group conversations. It can be deployed across dozens of mainstream instant messaging platforms, including QQ, Telegram, Feishu, DingTalk, Slack, LINE, Discord, Matrix, etc. In addition, it provides a reliable and extensible conversational AI infrastructure for individuals, developers, and teams. Whether you need a personal AI companion, an intelligent customer support agent, an automation assistant, or an enterprise knowledge base, AstrBot enables you to quickly build AI applications directly within your existing messaging workflows.
+管理员可以在群内预设"身份组"，群成员自助加入/退出，并通过指令让 bot AT 指定身份组中开启广播的所有成员。
 
-# Supports
+---
 
-- [AstrBot Repo](https://github.com/AstrBotDevs/AstrBot)
-- [AstrBot Plugin Development Docs (Chinese)](https://docs.astrbot.app/dev/star/plugin-new.html)
-- [AstrBot Plugin Development Docs (English)](https://docs.astrbot.app/en/dev/star/plugin-new.html)
+## 安装
+
+将插件目录放入 AstrBot 的 `data/plugins/` 文件夹，重启或在 WebUI 中重载插件即可。
+
+**支持平台：** aiocqhttp（OneBot v11，如 NapCat、Lagrange）
+
+---
+
+## 数据存储
+
+持久化数据保存于 AstrBot 根目录的 `data/plugin_data/astrbot_plugin_role_at/role_at_data.json`，重启不丢失，各群数据相互隔离。
+
+---
+
+## 权限说明
+
+插件将以下两类用户都视为**管理员**，可执行管理员专属指令：
+
+- AstrBot 全局管理员（在 AstrBot 配置中设定）
+- QQ 群管理员 / 群主
+
+---
+
+## 指令一览
+
+所有指令均以 `/role` 开头，**只能在群聊中使用**。
+
+### 通用指令（所有人可用）
+
+| 指令 | 说明 |
+|------|------|
+| `/role list` | 显示本群所有**可见**身份组，含序号、当前人数、人数上限及广播标记 |
+| `/role add <序号\|身份名>` | 加入对应身份组（支持序号或直接输入名称） |
+| `/role remove <序号>` | 退出对应序号的身份组 |
+| `/role at <身份名> [附加消息]` | 让 bot AT 该身份组成员，可附带一条额外消息 |
+| `/role help` | 显示帮助信息 |
+
+### 管理员专属指令
+
+| 指令 | 说明 |
+|------|------|
+| `/role addpreset <名称> <上限> <广播0/1> <可见0/1>` | 创建预设身份组 |
+| `/role delpreset <名称>` | 删除预设身份组（同时清除所有成员数据） |
+| `/role adminadd <QQ号> <序号>` | 将指定用户强制加入身份组 |
+| `/role adminremove <QQ号> <序号>` | 将指定用户从身份组中移除 |
+| `/role freeat <0/1>` | 控制普通用户能否使用 `/role at`（0=仅管理员可用，1=所有人可用） |
+
+---
+
+## 创建身份组参数说明
+
+```
+/role addpreset <名称> <上限人数> <广播功能> <是否可见>
+```
+
+| 参数 | 说明 |
+|------|------|
+| 名称 | 身份组名称，支持中文和空格，**不能为纯数字** |
+| 上限人数 | 整数，`0` 表示无上限 |
+| 广播功能 | `1` = 开启，`0` = 关闭。开启后加入时会询问用户是否接收广播 |
+| 是否可见 | `1` = 可见（出现在 `/role list`），`0` = 隐藏 |
+
+**示例：**
+
+```
+/role addpreset 足球爱好者 0 1 1
+```
+
+创建一个名为"足球爱好者"、人数无上限、开启广播、对所有人可见的身份组。
+
+---
+
+## 广播确认流程
+
+当用户加入一个**广播功能开启**的身份组时（无论是自行加入还是管理员添加），bot 会向其发送确认消息：
+
+```
+@用户 您已成功加入身份组 [足球爱好者]！
+
+@用户
+该身份组开启了广播功能，是否接收来自 [足球爱好者] 的广播消息？
+✅ 回复「同意」接收广播
+❌ 回复「拒绝」不接收广播
+（5 分钟内有效）
+```
+
+用户需要在 **5 分钟内**在群内回复：
+
+| 回复内容 | 效果 |
+|----------|------|
+| `同意` 或 `ok` / `OK` | 加入广播接收名单，之后 `/role at` 会 @ 到此人 |
+| `拒绝` 或 `no` / `NO` | 不接收广播，`/role at` 不会 @ 此人 |
+
+超时未回复则视为未确认，下次重新加入该身份组时会再次询问。
+
+---
+
+## `/role at` 行为说明
+
+- **广播身份组**（broadcast=1）：只 AT 在广播确认中选择「同意」的成员
+- **非广播身份组**（broadcast=0）：AT 该组所有成员
+- **附加消息**：在 AT 列表之后追加自定义内容，例如 `/role at 足球爱好者 今晚 8 点踢球，速来！`
+- 身份名支持含空格，插件会从最长前缀开始匹配，将剩余部分视为附加消息
+
+---
+
+## 典型使用场景
+
+1. 管理员创建"足球爱好者"身份组，开启广播：
+   ```
+   /role addpreset 足球爱好者 0 1 1
+   ```
+
+2. 群成员查看并加入：
+   ```
+   /role list
+   /role add 1
+   ```
+   加入后 bot 询问是否接收广播，成员回复「同意」。
+
+3. 有活动时，AT 所有接受广播的足球爱好者：
+   ```
+   /role at 足球爱好者
+   ```
+
+---
+
+## 相关链接
+
+- [AstrBot 项目主页](https://github.com/AstrBotDevs/AstrBot)
+- [AstrBot 插件开发文档](https://docs.astrbot.app/dev/star/plugin-new.html)
