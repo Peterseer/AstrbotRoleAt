@@ -136,11 +136,6 @@ class RoleAtPlugin(Star):
     @filter.command("role")
     async def role_command(self, event: AstrMessageEvent):
         """身份组管理指令 /role <子命令> [参数]"""
-        group_id = str(event.get_group_id()) if event.get_group_id() else None
-        if not group_id:
-            yield event.plain_result("❌ 该指令只能在群组中使用。")
-            return
-
         parts = event.message_str.strip().split()
         # parts[0] == "/role"，parts[1] 是子命令，parts[2:] 是参数
         if len(parts) < 2:
@@ -150,6 +145,17 @@ class RoleAtPlugin(Star):
         subcommand = parts[1].lower()
         args = parts[2:]
 
+        # showall 允许在私聊中调用，无需群组上下文
+        if subcommand == "showall":
+            async for result in self._cmd_showall(event, None, args):
+                yield result
+            return
+
+        group_id = str(event.get_group_id()) if event.get_group_id() else None
+        if not group_id:
+            yield event.plain_result("❌ 该指令只能在群组中使用。")
+            return
+
         dispatch = {
             "addpreset": self._cmd_addpreset,
             "delpreset": self._cmd_delpreset,
@@ -157,7 +163,6 @@ class RoleAtPlugin(Star):
             "add": self._cmd_add,
             "remove": self._cmd_remove,
             "show": self._cmd_show,
-            "showall": self._cmd_showall,
             "adminadd": self._cmd_adminadd,
             "adminremove": self._cmd_adminremove,
             "freeat": self._cmd_freeat,
