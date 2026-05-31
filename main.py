@@ -13,7 +13,7 @@ DATA_FILE = os.path.join("data", "plugin_data", "astrbot_plugin_role_at", "role_
 PENDING_TIMEOUT = 300  # 广播确认等待超时：5分钟
 
 
-@register("astrbot_plugin_role_at", "Author", "QQ群身份组管理与AT插件", "1.0.0")
+@register("astrbot_plugin_role_at", "Author", "QQ群身份组管理与AT插件", "1.2.1")
 class RoleAtPlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
@@ -157,6 +157,7 @@ class RoleAtPlugin(Star):
             "add": self._cmd_add,
             "remove": self._cmd_remove,
             "show": self._cmd_show,
+            "showall": self._cmd_showall,
             "adminadd": self._cmd_adminadd,
             "adminremove": self._cmd_adminremove,
             "freeat": self._cmd_freeat,
@@ -603,6 +604,53 @@ class RoleAtPlugin(Star):
 
         yield event.plain_result("\n".join(lines))
 
+    async def _cmd_showall(self, event, group_id, args):
+        """调试指令：显示所有群组的所有身份组数据（仅管理员）"""
+        if not self._is_admin(event):
+            yield event.plain_result("❌ 只有管理员才能使用调试指令。")
+            return
+
+        if not self.data:
+            yield event.plain_result("ℹ️ 当前没有任何已保存的群组数据。")
+            return
+
+        lines = ["🛠️ 全局身份组调试数据"]
+        lines.append("━━━━━━━━━━━━━━━━━━")
+
+        for gid, gdata in self.data.items():
+            freeat = gdata.get("freeat", 1)
+            roles = gdata.get("roles", {})
+            lines.append(f"\n📌 群 {gid}  [freeat={'开' if freeat else '关'}]  共 {len(roles)} 个身份组")
+
+            if not roles:
+                lines.append("  （无身份组）")
+                continue
+
+            for role_name, role_info in roles.items():
+                max_m = role_info.get("max_members", 0)
+                broadcast = role_info.get("broadcast", 0)
+                visible = role_info.get("visible", 1)
+                members = role_info.get("members", [])
+                bc_accept = role_info.get("broadcast_accept", [])
+
+                tags = []
+                tags.append(f"广播:{'✅' if broadcast else '❌'}")
+                tags.append(f"可见:{'✅' if visible else '❌'}")
+                tags.append(f"上限:{max_m if max_m else '无'}")
+                tags.append(f"人数:{len(members)}")
+                if broadcast:
+                    tags.append(f"已接受广播:{len(bc_accept)}")
+
+                lines.append(f"  ▸ [{role_name}]  {'  '.join(tags)}")
+
+                if members:
+                    for qq in members:
+                        bc_mark = "📢" if qq in bc_accept else "  "
+                        lines.append(f"      {bc_mark} {qq}")
+
+        lines.append("\n━━━━━━━━━━━━━━━━━━")
+        yield event.plain_result("\n".join(lines))
+
     def _help_text(self) -> str:
         return (
             "📖 身份组管理指令帮助\n"
@@ -620,7 +668,8 @@ class RoleAtPlugin(Star):
             "/role delpreset <名称> — 删除预设身份\n"
             "/role adminadd <QQ> <序号> [广播0/1] — 为用户添加身份\n"
             "/role adminremove <QQ> <序号> — 移除用户的身份\n"
-            "/role freeat <0/1> — 开关普通用户的 AT 功能"
+            "/role freeat <0/1> — 开关普通用户的 AT 功能\n"
+            "/role showall — 显示所有群组的完整身份组调试数据"
         )
 
     # ─────────────────────────────────────────
