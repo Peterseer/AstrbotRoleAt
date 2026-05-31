@@ -26,10 +26,31 @@ class RoleAtPlugin(Star):
         try:
             if os.path.exists(DATA_FILE):
                 with open(DATA_FILE, "r", encoding="utf-8") as f:
-                    self.data = json.load(f)
+                    raw = json.load(f)
+                self.data = self._normalize_ids(raw)
+            else:
+                self.data = {}
         except Exception as e:
             logger.error(f"[RoleAt] 加载数据失败: {e}")
             self.data = {}
+
+    @staticmethod
+    def _normalize_ids(raw: dict) -> dict:
+        """将数据中所有群号、QQ 号统一转为字符串，防止 JSON 整型 key 与运行时字符串 key 不匹配"""
+        normalized: Dict = {}
+        for group_id, group_data in raw.items():
+            gid = str(group_id)
+            new_group: Dict = {
+                "freeat": group_data.get("freeat", 1),
+                "roles": {},
+            }
+            for role_name, role_info in group_data.get("roles", {}).items():
+                new_role = dict(role_info)
+                new_role["members"] = [str(m) for m in role_info.get("members", [])]
+                new_role["broadcast_accept"] = [str(m) for m in role_info.get("broadcast_accept", [])]
+                new_group["roles"][role_name] = new_role
+            normalized[gid] = new_group
+        return normalized
 
     def _save_data(self):
         try:
@@ -40,6 +61,7 @@ class RoleAtPlugin(Star):
             logger.error(f"[RoleAt] 保存数据失败: {e}")
 
     def _get_group_data(self, group_id: str) -> dict:
+        group_id = str(group_id)
         if group_id not in self.data:
             self.data[group_id] = {"freeat": 1, "roles": {}}
         return self.data[group_id]
@@ -114,7 +136,7 @@ class RoleAtPlugin(Star):
     @filter.command("role")
     async def role_command(self, event: AstrMessageEvent):
         """身份组管理指令 /role <子命令> [参数]"""
-        group_id = event.get_group_id()
+        group_id = str(event.get_group_id()) if event.get_group_id() else None
         if not group_id:
             yield event.plain_result("❌ 该指令只能在群组中使用。")
             return
@@ -404,7 +426,7 @@ class RoleAtPlugin(Star):
             return
 
         role_name, role_info = found
-        user_id = event.get_sender_id()
+        user_id = str(event.get_sender_id())
         has_broadcast = role_info.get("broadcast") == 1
 
         status, error = self._add_or_update_member(
@@ -470,7 +492,7 @@ class RoleAtPlugin(Star):
             return
 
         role_name, role_info = found
-        user_id = event.get_sender_id()
+        user_id = str(event.get_sender_id())
         members = role_info.setdefault("members", [])
 
         if user_id not in members:
@@ -552,7 +574,7 @@ class RoleAtPlugin(Star):
             target_qq = args[0].lstrip("@")
             is_self = False
         else:
-            target_qq = event.get_sender_id()
+            target_qq = str(event.get_sender_id())
             is_self = True
 
         group_data = self._get_group_data(group_id)
@@ -614,7 +636,7 @@ class RoleAtPlugin(Star):
         if msg.startswith("/"):
             return
 
-        group_id = event.get_group_id()
+        group_id = str(event.get_group_id()) if event.get_group_id() else None
         if not group_id:
             return
 
@@ -686,11 +708,11 @@ class RoleAtPlugin(Star):
     @filter.regex(r"^(同意|拒绝|ok|OK|no|NO)$")
     async def broadcast_confirm(self, event: AstrMessageEvent):
         """拦截群内「同意」/「拒绝」/「ok」/「no」消息，处理广播接收确认"""
-        group_id = event.get_group_id()
+        group_id = str(event.get_group_id()) if event.get_group_id() else None
         if not group_id:
             return
 
-        user_id = event.get_sender_id()
+        user_id = str(event.get_sender_id())
         self._clean_pending()
 
         key = (group_id, user_id)
