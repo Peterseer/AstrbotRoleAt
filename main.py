@@ -1,7 +1,8 @@
 import json
 import os
+import re
 import time
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import astrbot.api.message_components as Comp
 from astrbot.api import logger
@@ -599,6 +600,84 @@ class RoleAtPlugin(Star):
             "/role adminremove <QQ> <序号> — 移除用户的身份\n"
             "/role freeat <0/1> — 开关普通用户的 AT 功能"
         )
+
+    # ─────────────────────────────────────────
+    #   自动监听 @身份组名 触发 AT
+    # ─────────────────────────────────────────
+
+    @filter.regex(r"@\S+")
+    async def auto_role_at(self, event: AstrMessageEvent):
+        """捕获任意消息中的 @身份组名，自动触发广播 AT"""
+        msg = event.message_str.strip()
+
+        # 忽略 /role 指令消息，避免与命令处理器冲突
+        if msg.startswith("/"):
+            return
+
+        group_id = event.get_group_id()
+        if not group_id:
+            return
+
+        group_data = self._get_group_data(group_id)
+        roles = group_data.get("roles", {})
+        if not roles:
+            return
+
+        # 权限检查：freeat=0 时只有管理员可触发
+        if not self._is_admin(event) and group_data.get("freeat", 1) == 0:
+            return
+
+        # 按名称长度降序排列，优先匹配最长的身份名
+        sorted_roles = sorted(roles.keys(), key=len, reverse=True)
+
+        matched_role: Optional[str] = None
+        match_start = -1
+        match_end = -1
+
+        for at_match in re.finditer(r"@", msg):
+            pos = at_match.start()
+            after_at = msg[pos + 1:]
+            for role_name in sorted_roles:
+                if after_at.startswith(role_name):
+                    matched_role = role_name
+                    match_start = pos
+                    match_end = pos + 1 + len(role_name)
+                    break
+            if matched_role:
+                break
+
+        if not matched_role:
+            return
+
+        role_info = roles[matched_role]
+
+        # 只处理开启了广播功能的身份组
+        if role_info.get("broadcast") != 1:
+            return
+
+        members = role_info.get("members", [])
+        broadcast_accept = role_info.get("broadcast_accept", [])
+        at_targets = [m for m in members if m in broadcast_accept]
+
+        if not at_targets:
+            return  # 没有接受广播的成员，静默忽略
+
+        # 附加消息：@ 前面的文字 + 角色名后面的文字
+        before = msg[:match_start].strip()
+        after = msg[match_end:].strip()
+        extra_msg = (before + (" " if before and after else "") + after).strip()
+
+        chain: List = []
+        for qq in at_targets:
+            chain.append(Comp.At(qq=qq))
+            chain.append(Comp.Plain(" "))
+        notice = f"\n📣 来自身份组 [{matched_role}] 的呼叫"
+        if extra_msg:
+            notice += f"\n{extra_msg}"
+        chain.append(Comp.Plain(notice))
+
+        yield event.chain_result(chain)
+        event.stop_event()
 
     # ─────────────────────────────────────────
     #   广播接收确认监听
